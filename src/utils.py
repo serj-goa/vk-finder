@@ -1,74 +1,182 @@
-from vk_api.utils import get_random_id
+from vk_api.longpoll import VkLongPoll, VkEventType
 
-from src.config.config import session, user_session
-
-
-def correct_user_info(user_data: dict, user_id: int, flags: dict, event) -> None:
-    if user_data[user_id]['user_birth'] is None and flags['start_request']:
-        if flags['send_msg_date']:
-            user_data[user_id]['user_birth'] = event.text.strip()
-
-    elif user_data[user_id]['user_gender'] is None and flags['start_request']:
-        if flags['send_msg_gender']:
-            user_data[user_id]['user_gender'] = event.text.strip().lower()
-
-    elif user_data[user_id]['user_city'] is None and flags['start_request']:
-        if flags['send_msg_city']:
-            user_data[user_id]['user_city'] = event.text.strip().lower()
+from src.config.config import session
+from src.vk_api_methods import find_contacts, get_current_user_data, get_cities_from_db, \
+                                get_contact_photo, send_message
 
 
-def find_persons(user_info: dict, user_id: int):
-    response = user_session.method(
-        'users.search',
-        {
-            'sex': user_info[user_id]['user_gender'] - 1,
-            'has_photo': 1,
-            'count': 1000,
-            'v': 5.131,
-        }
-    )
-    if response:
-        return response.get('items')[:20]
+def clean_contacts(all_contacts: list) -> list:
+    if not all_contacts:
+        print('Подходящих контактов не найдено.')
 
-    send_message(user_id, 'Ошибка')
+        return all_contacts
+
+    contacts = []
+
+    for contact in all_contacts:
+        if not contact['is_closed']:
+            contacts.append(contact)
+
+    return contacts
 
 
-def parse_user_info(data: dict, user_data: dict, user_id: int):
+def get_info_by_user(user_data: dict, user_id: int) -> None:
+    none_fields = list(filter(lambda x: x[1] is None, user_data[user_id].items()))
+    
+    if not none_fields:
+        return None
+    
+    for key, value in none_fields:
+        if key == 'user_birth':
+            send_message(user_id, message='Укажите возраст от:')
+            age_from = get_user_age()
+
+            send_message(user_id, message='Укажите возраст до:')
+            age_to = get_user_age()
+
+            user_data[user_id]['age_from'] = age_from
+            user_data[user_id]['age_to'] = age_to
+
+        elif key == 'user_gender':
+            pass
+
+        elif key == 'user_city':
+            send_message(user_id, message=f'Укажите город для поиска')
+
+            city, city_id = get_user_city()
+            user_data[user_id]['user_city'] = city
+            user_data[user_id]['user_city_id'] = city_id
+
+            send_message(user_id, message=f'выбран город {city.title()}')
+
+
+def get_year_by_birth(user_birth: str) -> int | None:
+    if user_birth is None:
+        return None
+
+    year = user_birth.split('.')
+
+    if len(year) == 3:
+        return int(year[2])
+
+
+def get_user_age() -> int:
+    while True:
+        for event in VkLongPoll(session).listen():
+            if event.type == VkEventType.MESSAGE_NEW and event.to_me:
+                msg = event.text.strip()
+                sender = event.user_id
+                break
+        if msg.isdigit():
+            return int(msg)
+
+        send_message(user_id=sender, message='Возраст должен быть числом!')
+
+
+def get_user_city() -> tuple:
+    for event in VkLongPoll(session).listen():
+        if event.type == VkEventType.MESSAGE_NEW and event.to_me:
+            msg = event.text.strip().lower()
+            sender = event.user_id
+
+            response = get_cities_from_db(query=msg)
+            cities = list(map(lambda x: x['title'].lower(), response['items']))
+
+            if msg in cities:
+                return response['items'][0]['title'], response['items'][0]['id']
+
+            else:
+                send_message(user_id=sender, message='такого города нет в базе данных.')
+
+
+def parse_user_info_by_fields(data: dict, user_data: dict, user_id: int):
+    year = get_year_by_birth(user_birth=data.get('bdate'))
+
     user_data[user_id] = {
-        'user_birth': data.get('bdate'),
+        'user_birth': year,
         'user_gender': data.get('sex'),
-        'user_city': data.get('city'),
+        'user_city': None,
     }
 
 
-def send_message(user_id: int, message: str) -> None:
-    session.method(
-        'messages.send', 
-        {
-            'user_id': user_id, 
-            'message': message, 
-            'random_id': get_random_id(), 
-        }
+def show_contact_in_bot(contacts, user_id, keyboard_args):
+
+    for contact in contacts:
+        photo = get_contact_photo(contact_id=contact['id'])
+
+        if photo:
+            msg = f"{contact['first_name']} {contact['last_name']}\nhttps://vk.com/id{contact['id']}"
+            send_message(
+                user_id=user_id, 
+                message=msg, 
+                attachments=photo['attachments'],
+                keyboard_args=keyboard_args,
+            )
+
+            for event in VkLongPoll(session).listen():
+                if event.type == VkEventType.MESSAGE_NEW and event.to_me:
+                    msg = event.text.strip().lower()
+
+                    if msg == 'далее':
+                        break
+                    elif msg == 'стоп':
+                        return
+
+
+def start_contact_search(sender: int):
+    current_request = {}
+    current_id = sender
+
+    fields = get_current_user_data(user_id=sender)
+    print(fields)
+
+    parse_user_info_by_fields(
+        data=fields, 
+        user_data=current_request,
+        user_id=sender
+    )
+
+    get_info_by_user(user_data=current_request, user_id=sender)
+
+    all_contacts = find_contacts(user_info=current_request, user_id=current_id)
+    response_contacts = clean_contacts(all_contacts)
+
+    show_contact_in_bot(
+        contacts=response_contacts, 
+        user_id=current_id, 
+        keyboard_args=(('Далее', 'blue'), ('Стоп', 'red'))
+    )
+
+    send_message(
+        user_id=current_id, 
+        message='Вы остановили поиск, пожалуйста выберите новую команду',
+        keyboard_args=(('Привет Бот', 'blue'), ('Найти пару', 'blue'), )
     )
 
 
-def set_default_flags(flags: dict) -> None:
-    for key in flags.keys():
-        flags[key] = False
+def start_main_event() -> tuple:
+    for event in VkLongPoll(session).listen():
+        if event.type == VkEventType.MESSAGE_NEW and event.to_me:
+            reseived_message = event.text.lower()
+            sender = event.user_id
 
+            if reseived_message in ('привет', 'привет бот'):
+                fields = get_current_user_data(user_id=sender)
+                send_message(
+                    user_id=sender, 
+                    message=f"Привет {fields['first_name']},\n\
+                            для поиска пары нажми кнопку Найти пару",
+                    keyboard_args=(('Найти пару', 'blue'), )
+                )
 
-def show_clarifying_message(user_data: dict, user_id: str, flags: dict) -> None:
-    if user_data[user_id]['user_birth'] is None and flags['start_request']:
-        if not flags['send_msg_date']:
-            send_message(user_id, message='Укажите дату рождения цифрами в формате месяц.день.год полностью')
-            flags['send_msg_date'] = True
+            elif reseived_message in ('найти', 'найти пару'):
+                break
+                
+            else:
+                send_message(
+                    user_id=sender, 
+                    message='Выбери необходимую команду',
+                    keyboard_args=(('Привет Бот', 'blue'), ('Найти пару', 'blue'), )
+                )
 
-    elif user_data[user_id]['user_gender'] is None and flags['start_request']:
-        if not flags['send_msg_gender']:
-            send_message(user_id, message='Укажите пол одной буквой М или Ж')
-            flags['send_msg_gender'] = True
-
-    elif user_data[user_id]['user_city'] is None and flags['start_request']:
-        if not flags['send_msg_city']:
-            send_message(user_id, message='Укажите город')
-            flags['send_msg_city'] = True
+    return reseived_message, sender
