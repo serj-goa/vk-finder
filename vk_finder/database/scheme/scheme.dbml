@@ -1,0 +1,32 @@
+table contacts {
+    vk_id integer [pk]
+    firstname varchar
+    lastname varchar
+
+    created_at timestamp
+}
+
+table photos {
+    vk_id integer [ref: > contacts.vk_id]
+    vk_photo_id integer
+
+    created_at timestamp
+
+    composite key (vk_id, photo_id)
+}
+
+table bot_search_results {
+    who_looking_vk_id integer [ref: > contacts.vk_id]
+    who_found_vk_id integer [ref: > contacts.vk_id]
+
+    is_viewed bool
+    is_favorited bool
+    is_black_listed bool
+
+    created_at datetime
+    viewed_at datetime [null]
+    favorited_at datetime [null]
+    blacklisted_at datetime[null]
+
+    composite key (who_looking_vk_id, who_found_vk_id)
+}
