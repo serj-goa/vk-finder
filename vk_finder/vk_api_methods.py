@@ -27,11 +27,22 @@ def find_contacts(user_info: dict, user_id: int, status: None) -> list:
         }
     )
 
-    if response:
+    try:
         return response.get('items')
 
-    send_message(user_id, 'Ошибка')
-    return []
+    except KeyError as error:
+        send_message(user_id, 'Ошибка поиска контактов!')
+        return []
+
+    except ApiError as error:
+        send_message(user_id, 'Ошибка API при поиске контактов.')
+        print(f'API Error when searching for contacts!\n{error}')
+        return []
+
+    except Exception as error:
+        send_message(user_id, 'Неизвестная ошибка при поиске контактов.')
+        print(f'Unknown error when searching for contacts!\n{error}')
+        return []
 
 
 def get_cities_from_db(query: str) -> dict:
