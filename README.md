@@ -12,7 +12,7 @@ Popularity is determined by the number of likes and comments.
 
 ---
 
-*Built with:*
+### Built with:
 
 [<img src="https://img.shields.io/badge/python-3.10%20%7C%203.11-blue?style=for-the-badge&logo=Python">](https://www.python.org/)
 [<img src="https://img.shields.io/badge/PostgreSQL-14.6-blue?style=for-the-badge&logo=PostgreSQL">](https://www.postgresql.org/)
@@ -21,7 +21,7 @@ Popularity is determined by the number of likes and comments.
 
 ---
 
-## Project setup steps
+### Project setup steps
 
 **1. Project requirements**
 ```python
